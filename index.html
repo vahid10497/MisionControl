@@ -84,26 +84,17 @@
       });
     }
 
-    function init() {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.xr.enabled = true;
-      document.body.appendChild(renderer.domElement);
+    async function onSessionStart(session) {
+      renderer.xr.setSession(session);
 
-      document.body.appendChild(ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] }));
-
-      scene = new THREE.Scene();
-      camera = new THREE.PerspectiveCamera();
-      camera.add(audioListener);
-      scene.add(camera);
-
-      const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-      scene.add(light);
+      referenceSpace = await session.requestReferenceSpace('local');
+      const viewerSpace = await session.requestReferenceSpace('viewer');
+      hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
 
       controller = renderer.xr.getController(0);
       scene.add(controller);
 
-      controller.addEventListener('select', (event) => {
+      controller.addEventListener('select', () => {
         const frame = renderer.xr.getFrame();
         if (!frame || !hitTestSource) return;
         const hitTestResults = frame.getHitTestResults(hitTestSource);
@@ -122,18 +113,33 @@
           }, 6000);
         }
       });
+    }
+
+    function init() {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      document.body.appendChild(renderer.domElement);
+
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera();
+      camera.add(audioListener);
+      scene.add(camera);
+
+      const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+      scene.add(light);
+
+      navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['hit-test'] }).then(onSessionStart);
+
+      document.body.appendChild(ARButton.createButton(renderer, {
+        requiredFeatures: ['hit-test'],
+        domOverlay: { root: document.body }
+      }));
 
       renderer.setAnimationLoop(() => {
         const delta = clock.getDelta();
         if (mixer) mixer.update(delta);
         renderer.render(scene, camera);
-      });
-
-      renderer.xr.addEventListener('sessionstart', async () => {
-        const session = renderer.xr.getSession();
-        referenceSpace = await session.requestReferenceSpace('local');
-        const viewerSpace = await session.requestReferenceSpace('viewer');
-        hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
       });
     }
 
