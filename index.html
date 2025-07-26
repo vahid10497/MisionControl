@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>WebAR Wall Placement (Stable)</title>
+  <title>WebAR Wall Placement with Anchors</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     body {
@@ -41,7 +41,6 @@
 
     let camera, scene, renderer, controller;
     let mixer, model;
-
     const clock = new THREE.Clock();
     const instruction = document.getElementById('instruction');
     const headphone = document.getElementById('headphone');
@@ -51,21 +50,23 @@
     const loader = new GLTFLoader();
 
     let hitTestSource = null;
-    let hitTestSourceRequested = false;
-    let placementRequested = false;
+    let localReferenceSpace = null;
+    let anchorObjects = [];
 
     function fadeHeadphoneIn() {
       headphone.style.opacity = 0.7;
       setTimeout(() => { headphone.style.opacity = 0; }, 5000);
     }
 
-    function placeModelAt(position, rotation) {
-      loader.load('PortalANimMus-02.glb', gltf => {
+    function createAnchoredModel(anchorSpace) {
+      loader.load('PortalANimMus-02.glb', (gltf) => {
+        const anchorObject = new THREE.Object3D();
+        scene.add(anchorObject);
+        anchorObjects.push({ anchorSpace, anchorObject });
+
         model = gltf.scene;
-        model.position.copy(position);
-        model.quaternion.copy(rotation);
-        model.translateZ(-0.5); // move 50cm forward
-        scene.add(model);
+        anchorObject.add(model);
+        model.translateZ(-0.5);
 
         mixer = new THREE.AnimationMixer(model);
         gltf.animations.forEach(clip => {
@@ -97,13 +98,38 @@
       renderer.xr.enabled = true;
       document.body.appendChild(renderer.domElement);
 
-      document.body.appendChild(ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] }));
+      document.body.appendChild(ARButton.createButton(renderer, {
+        requiredFeatures: ['hit-test', 'local'],
+        optionalFeatures: ['anchors']
+      }));
 
       controller = renderer.xr.getController(0);
       scene.add(controller);
 
-      controller.addEventListener('select', () => {
-        placementRequested = true;
+      renderer.xr.addEventListener('sessionstart', async () => {
+        const session = renderer.xr.getSession();
+        localReferenceSpace = await session.requestReferenceSpace('local');
+        const viewerSpace = await session.requestReferenceSpace('viewer');
+        hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+
+        controller.addEventListener('select', () => {
+          const frame = renderer.xr.getFrame();
+          if (!hitTestSource || !frame) return;
+          const hitTestResults = frame.getHitTestResults(hitTestSource);
+          if (hitTestResults.length > 0) {
+            const hit = hitTestResults[0];
+            hit.createAnchor().then(anchor => {
+              const anchorSpace = anchor.anchorSpace;
+              instruction.style.display = 'none';
+              fadeHeadphoneIn();
+              setTimeout(() => {
+                createAnchoredModel(anchorSpace);
+              }, 6000);
+            }).catch(() => {
+              console.warn('Anchor creation failed, fallback to unanchored placement.');
+            });
+          }
+        });
       });
 
       renderer.setAnimationLoop((timestamp, frame) => {
@@ -111,39 +137,17 @@
         if (mixer) mixer.update(delta);
 
         if (frame) {
-          const referenceSpace = renderer.xr.getReferenceSpace();
-          const session = renderer.xr.getSession();
-
-          if (!hitTestSourceRequested) {
-            session.requestReferenceSpace('viewer').then(space => {
-              session.requestHitTestSource({ space }).then(source => {
-                hitTestSource = source;
-              });
-            });
-            hitTestSourceRequested = true;
-          }
-
-          if (hitTestSource && placementRequested) {
-            const hitTestResults = frame.getHitTestResults(hitTestSource);
-            if (hitTestResults.length > 0) {
-              const hit = hitTestResults[0];
-              const pose = hit.getPose(referenceSpace);
-
-              if (pose) {
-                const position = new THREE.Vector3().fromArray(pose.transform.position.toArray());
-                const rotation = new THREE.Quaternion().fromArray(pose.transform.orientation.toArray());
-
-                instruction.style.display = 'none';
-                fadeHeadphoneIn();
-
-                setTimeout(() => {
-                  placeModelAt(position, rotation);
-                }, 6000);
-
-                placementRequested = false; // prevent multiple placements
-              }
+          anchorObjects.forEach(({ anchorSpace, anchorObject }) => {
+            const pose = frame.getPose(anchorSpace, localReferenceSpace);
+            if (pose) {
+              anchorObject.matrix.fromArray(pose.transform.matrix);
+              anchorObject.matrix.decompose(
+                anchorObject.position,
+                anchorObject.quaternion,
+                anchorObject.scale
+              );
             }
-          }
+          });
         }
 
         renderer.render(scene, camera);
