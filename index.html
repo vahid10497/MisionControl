@@ -66,6 +66,17 @@
             color: white;
             z-index: 200;
         }
+        .ar-button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -77,6 +88,7 @@
         <p>Point your camera at a wall surface</p>
         <p>Tap to place the portal</p>
         <button id="start-button">Start AR</button>
+        <div id="ar-button-container"></div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
@@ -93,13 +105,14 @@
         let assetsLoaded = 0;
         const totalAssets = 3; // Model, audio indicator image, instruction image
 
-        // Check for WebXR and ARCore support
-        if (!navigator.xr) {
-            showError("WebXR not supported in your browser. Try Chrome on an ARCore-compatible Android device.");
-        }
-
         // Main initialization function
         async function init() {
+            // First check for WebXR support
+            if (!navigator.xr) {
+                showError("WebXR not supported in your browser. Try Chrome on an ARCore-compatible Android device.");
+                return;
+            }
+
             // Create scene
             scene = new THREE.Scene();
             
@@ -112,11 +125,6 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
             document.getElementById('ar-container').appendChild(renderer.domElement);
-            
-            // Add AR button
-            const arButton = ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] });
-            document.getElementById('instructions').appendChild(arButton);
-            arButton.style.display = 'none';
             
             // Set up controller
             controller = renderer.xr.getController(0);
@@ -137,6 +145,16 @@
                 await loadAssets();
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('instructions').style.display = 'flex';
+                
+                // Only create AR button after we know WebXR is supported and assets are loaded
+                const arButton = ARButton.createButton(renderer, { 
+                    requiredFeatures: ['hit-test'],
+                    optionalFeatures: ['dom-overlay'],
+                    domOverlay: { root: document.body }
+                });
+                document.getElementById('ar-button-container').appendChild(arButton);
+                arButton.classList.add('ar-button');
+                
             } catch (error) {
                 showError("Failed to load assets: " + error.message);
             }
@@ -288,34 +306,29 @@
             document.getElementById('instructions').style.display = 'none';
         }
         
-        // Initialize hit test
-        async function initializeXR() {
-            const session = await navigator.xr.requestSession('immersive-ar', {
-                requiredFeatures: ['hit-test']
-            });
-            
-            const referenceSpace = await session.requestReferenceSpace('local');
-            
-            // Create hit test source
-            const viewerSpace = await session.requestReferenceSpace('viewer');
-            hitTestSource = await session.requestHitTestSource({
-                space: viewerSpace,
-                entityTypes: ['plane'],
-                offsetRayOrigin: true
-            });
-            
-            // Hide instructions and show AR button
-            document.getElementById('start-button').style.display = 'none';
-            document.querySelector('.ar-button').style.display = 'block';
-            
-            // Start AR session
-            await renderer.xr.setSession(session);
-        }
-        
         // Start button click handler
         document.getElementById('start-button').addEventListener('click', async () => {
             try {
-                await initializeXR();
+                const session = await navigator.xr.requestSession('immersive-ar', {
+                    requiredFeatures: ['hit-test']
+                });
+                
+                const referenceSpace = await session.requestReferenceSpace('local');
+                
+                // Create hit test source
+                const viewerSpace = await session.requestReferenceSpace('viewer');
+                hitTestSource = await session.requestHitTestSource({
+                    space: viewerSpace,
+                    entityTypes: ['plane'],
+                    offsetRayOrigin: true
+                });
+                
+                // Hide instructions and show AR button
+                document.getElementById('start-button').style.display = 'none';
+                document.querySelector('.ar-button').style.display = 'block';
+                
+                // Start AR session
+                await renderer.xr.setSession(session);
             } catch (error) {
                 showError("AR failed to start: " + error.message);
             }
