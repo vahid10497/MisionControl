@@ -1,160 +1,103 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>WebAR Wall Placement with Anchors</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    body {
-      margin: 0;
-      overflow: hidden;
-    }
-    #instruction, #headphone {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      object-fit: contain;
-      pointer-events: none;
-    }
-    #headphone {
-      width: 128px;
-      height: auto;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      opacity: 0;
-      transition: opacity 1s;
-      z-index: 6;
-    }
-  </style>
-</head>
-<body>
-  <img id="instruction" src="Firstimage.png" style="opacity: 0.7; z-index: 5;" />
-  <img id="headphone" src="earphone.png" />
+<!doctype html>
+<html>
+  <head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1, user-scalable=no'>
+    <title>WebXR Anchor Example</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: transparent;
+        touch-action: none;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <script type="module">
+      import {WebGLRenderer, Scene, PerspectiveCamera, HemisphereLight, Object3D, Matrix4} from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+      import {GLTFLoader} from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
 
-  <script type="module">
-    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-    import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
-    import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/ARButton.js';
+      let scene, camera, renderer;
+      let controller;
+      let hitTestSource = null;
+      let anchorObjects = [];
+      let localRefSpace;
 
-    let camera, scene, renderer, controller;
-    let mixer, model;
-    const clock = new THREE.Clock();
-    const instruction = document.getElementById('instruction');
-    const headphone = document.getElementById('headphone');
-    const listener = new THREE.AudioListener();
-    const sound = new THREE.Audio(listener);
-    const audioLoader = new THREE.AudioLoader();
-    const loader = new GLTFLoader();
+      const loader = new GLTFLoader();
 
-    let hitTestSource = null;
-    let localReferenceSpace = null;
-    let anchorObjects = [];
+      init();
 
-    function fadeHeadphoneIn() {
-      headphone.style.opacity = 0.7;
-      setTimeout(() => { headphone.style.opacity = 0; }, 5000);
-    }
+      function init() {
+        scene = new Scene();
+        camera = new PerspectiveCamera();
 
-    function createAnchoredModel(anchorSpace) {
-      loader.load('PortalANimMus-02.glb', (gltf) => {
-        const anchorObject = new THREE.Object3D();
-        scene.add(anchorObject);
-        anchorObjects.push({ anchorSpace, anchorObject });
+        renderer = new WebGLRenderer({antialias: true, alpha: true});
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.xr.enabled = true;
+        document.body.appendChild(renderer.domElement);
 
-        model = gltf.scene;
-        anchorObject.add(model);
-        model.translateZ(-0.5);
+        const light = new HemisphereLight(0xffffff, 0xbbbbff, 1);
+        scene.add(light);
 
-        mixer = new THREE.AnimationMixer(model);
-        gltf.animations.forEach(clip => {
-          const action = mixer.clipAction(clip);
-          action.play();
-          action.loop = THREE.LoopRepeat;
-        });
+        document.body.appendChild(ARButton.createButton(renderer, {
+          requiredFeatures: ['hit-test', 'anchors', 'local']
+        }));
 
-        audioLoader.load('museumversion_250709.mp3', buffer => {
-          sound.setBuffer(buffer);
-          sound.setLoop(true);
-          sound.setVolume(1);
-          sound.play();
-        });
-      });
-    }
+        controller = renderer.xr.getController(0);
+        scene.add(controller);
 
-    function init() {
-      scene = new THREE.Scene();
-      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
-      camera.add(listener);
-      scene.add(camera);
+        renderer.xr.addEventListener('sessionstart', async () => {
+          const session = renderer.xr.getSession();
+          localRefSpace = await session.requestReferenceSpace('local');
+          const viewerSpace = await session.requestReferenceSpace('viewer');
+          hitTestSource = await session.requestHitTestSource({space: viewerSpace});
 
-      const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-      scene.add(light);
+          controller.addEventListener('select', () => {
+            const frame = renderer.xr.getFrame();
+            if (!hitTestSource || !frame) return;
 
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.xr.enabled = true;
-      document.body.appendChild(renderer.domElement);
+            const hits = frame.getHitTestResults(hitTestSource);
+            if (hits.length > 0) {
+              const hit = hits[0];
+              hit.createAnchor().then(anchor => {
+                const anchorSpace = anchor.anchorSpace;
+                const anchorObject = new Object3D();
+                scene.add(anchorObject);
+                anchorObjects.push({anchorSpace, anchorObject});
 
-      document.body.appendChild(ARButton.createButton(renderer, {
-        requiredFeatures: ['hit-test', 'local'],
-        optionalFeatures: ['anchors']
-      }));
-
-      controller = renderer.xr.getController(0);
-      scene.add(controller);
-
-      renderer.xr.addEventListener('sessionstart', async () => {
-        const session = renderer.xr.getSession();
-        localReferenceSpace = await session.requestReferenceSpace('local');
-        const viewerSpace = await session.requestReferenceSpace('viewer');
-        hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-
-        controller.addEventListener('select', () => {
-          const frame = renderer.xr.getFrame();
-          if (!hitTestSource || !frame) return;
-          const hitTestResults = frame.getHitTestResults(hitTestSource);
-          if (hitTestResults.length > 0) {
-            const hit = hitTestResults[0];
-            hit.createAnchor().then(anchor => {
-              const anchorSpace = anchor.anchorSpace;
-              instruction.style.display = 'none';
-              fadeHeadphoneIn();
-              setTimeout(() => {
-                createAnchoredModel(anchorSpace);
-              }, 6000);
-            }).catch(() => {
-              console.warn('Anchor creation failed, fallback to unanchored placement.');
-            });
-          }
-        });
-      });
-
-      renderer.setAnimationLoop((timestamp, frame) => {
-        const delta = clock.getDelta();
-        if (mixer) mixer.update(delta);
-
-        if (frame) {
-          anchorObjects.forEach(({ anchorSpace, anchorObject }) => {
-            const pose = frame.getPose(anchorSpace, localReferenceSpace);
-            if (pose) {
-              anchorObject.matrix.fromArray(pose.transform.matrix);
-              anchorObject.matrix.decompose(
-                anchorObject.position,
-                anchorObject.quaternion,
-                anchorObject.scale
-              );
+                loader.load('PortalANimMus-02.glb', (gltf) => {
+                  const model = gltf.scene;
+                  anchorObject.add(model);
+                });
+              });
             }
           });
-        }
+        });
 
-        renderer.render(scene, camera);
-      });
-    }
+        renderer.setAnimationLoop((timestamp, frame) => {
+          if (frame) {
+            anchorObjects.forEach(({anchorSpace, anchorObject}) => {
+              const pose = frame.getPose(anchorSpace, localRefSpace);
+              if (pose) {
+                anchorObject.matrix.fromArray(pose.transform.matrix);
+                anchorObject.matrix.decompose(anchorObject.position, anchorObject.quaternion, anchorObject.scale);
+              }
+            });
+          }
 
-    init();
-  </script>
-</body>
+          renderer.render(scene, camera);
+        });
+      }
+
+      import {ARButton} from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/ARButton.js';
+    </script>
+  </body>
 </html>
